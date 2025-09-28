@@ -1,4 +1,4 @@
-using FCG.Games.Api.Models;
+﻿using FCG.Games.Api.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,14 +15,16 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new() { Title = "FCG.Games.Api", Version = "v1" });
-    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+
+    // 🔑 Aceita só o token cru, sem "Bearer"
+    c.AddSecurityDefinition("JWT", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
     {
         In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Description = "JWT Authorization header using the Bearer scheme.",
         Name = "Authorization",
         Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
+        Description = "Informe apenas o token JWT (sem 'Bearer')"
     });
+
     c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
     {
         {
@@ -31,7 +33,7 @@ builder.Services.AddSwaggerGen(c =>
                 Reference = new Microsoft.OpenApi.Models.OpenApiReference
                 {
                     Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
-                    Id = "Bearer"
+                    Id = "JWT"
                 }
             },
             Array.Empty<string>()
@@ -40,10 +42,8 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // JWT Authentication
-var jwtKey = builder.Configuration["Jwt:Key"]
-             ?? throw new InvalidOperationException("JWT Key not configured");
-var jwtIssuer = builder.Configuration["Jwt:Issuer"]
-                ?? throw new InvalidOperationException("JWT Issuer not configured");
+var jwtKey = builder.Configuration["Jwt:Key"] ?? "default_secret_key";
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "default_issuer";
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -176,5 +176,5 @@ app.MapDelete("/games/{id:guid}", async (Guid id, GamesDbContext db) =>
 
 app.Run();
 
-// Necess�rio para WebApplicationFactory nos testes
+// Necessário para WebApplicationFactory nos testes
 public partial class Program { }
