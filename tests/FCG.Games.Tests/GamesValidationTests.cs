@@ -5,11 +5,11 @@ using Xunit;
 
 namespace FCG.Games.Tests;
 
-public class GamesValidationTests : IClassFixture<CustomWebApplicationFactory>
+public class GamesValidationTests : IClassFixture<CustomWebApplicationFactory<Program>>
 {
     private readonly HttpClient _client;
 
-    public GamesValidationTests(CustomWebApplicationFactory factory)
+    public GamesValidationTests(CustomWebApplicationFactory<Program> factory)
     {
         _client = factory.CreateClient();
     }
