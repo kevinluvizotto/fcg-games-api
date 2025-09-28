@@ -1,4 +1,4 @@
-using FCG.Games.Api.Models;
+﻿using FCG.Games.Api.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -19,13 +19,13 @@ namespace FCG.Games.Tests
                 if (descriptor != null)
                     services.Remove(descriptor);
 
-                // Adiciona banco em mem�ria isolado para testes
+                // Usa sempre o mesmo banco em memória
                 services.AddDbContext<GamesDbContext>(options =>
                 {
                     options.UseInMemoryDatabase("GamesTestDb");
                 });
 
-                // Garante banco limpo antes de cada teste
+                // 🔄 Limpa o banco a cada execução da factory
                 using var scope = services.BuildServiceProvider().CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<GamesDbContext>();
                 db.Database.EnsureDeleted();

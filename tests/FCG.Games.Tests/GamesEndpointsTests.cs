@@ -20,12 +20,12 @@ namespace FCG.Games.Tests
         [Fact]
         public async Task GetGames_ShouldReturnEmptyList_WhenNoGamesExist()
         {
-            // 🔄 Garante que o banco esteja vazio antes do teste
+            // Limpa o banco ANTES de rodar o teste
             using (var scope = _factory.Services.CreateScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<GamesDbContext>();
                 db.Games.RemoveRange(db.Games);
-                db.SaveChanges();
+                await db.SaveChangesAsync();
             }
 
             // Act
