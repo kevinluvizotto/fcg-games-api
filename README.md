@@ -6,7 +6,7 @@ Parte da **Fase 3** (migração para microsserviços).
 ---
 
 ## 🚀 Tecnologias
-- .NET 9 (Minimal APIs)
+- .NET 8 (Minimal APIs)
 - Entity Framework Core (InMemory para dev/testes)
 - JWT Authentication (JSON Web Token)
 - Roles (User/Admin)
@@ -19,7 +19,7 @@ Parte da **Fase 3** (migração para microsserviços).
 ## 📦 Como rodar localmente
 
 ### Pré-requisitos
-- .NET 9 SDK  
+- .NET 8 SDK  
 - (Opcional) Docker
 
 ### Passos
