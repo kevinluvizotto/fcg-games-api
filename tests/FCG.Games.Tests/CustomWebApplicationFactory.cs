@@ -22,7 +22,7 @@ namespace FCG.Games.Tests
                 // Usa sempre o mesmo banco em memória
                 services.AddDbContext<GamesDbContext>(options =>
                 {
-                    options.UseInMemoryDatabase("GamesTestDb");
+                    options.UseInMemoryDatabase("GamesTestDb"); 
                 });
 
                 // 🔄 Limpa o banco a cada execução da factory
