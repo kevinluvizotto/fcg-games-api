@@ -1,4 +1,4 @@
-﻿﻿name: CD - Deploy Games API with Docker
+﻿name: CD - Deploy Games API with Docker
 
 on:
   push:
