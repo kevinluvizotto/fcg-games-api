@@ -1,180 +1,320 @@
-﻿using FCG.Games.Api.Models;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
-using System.Text;
+using FCG.Games.Api.Models;
 
-var builder = WebApplication.CreateBuilder(args);
-
-// Services
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(c =>
+namespace FCG.Games.Api
 {
-    c.SwaggerDoc("v1", new() { Title = "FCG.Games.Api", Version = "v1" });
-
-    // 🔑 Aceita só o token cru, sem "Bearer"
-    c.AddSecurityDefinition("JWT", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    public partial class Program
     {
-        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Name = "Authorization",
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-        Description = "Informe apenas o token JWT (sem 'Bearer')"
-    });
-
-    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
-    {
+        public static void Main(string[] args)
         {
-            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            var builder = WebApplication.CreateBuilder(args);
+
+            // 🔒 Forçar uso do appsettings.json principal
+            builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+
+            // --- Logging configuration ---
+            builder.Services.AddLogging(logging =>
             {
-                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                logging.AddConsole();
+                logging.SetMinimumLevel(LogLevel.Debug);
+            });
+
+            // --- Database configuration (Azure SQL) ---
+            var connectionString = builder.Configuration.GetConnectionString("FCGDatabase")
+                ?? throw new InvalidOperationException("Connection string 'FCGDatabase' não está configurada.");
+
+            builder.Services.AddDbContext<GamesDbContext>(options =>
+                options.UseSqlServer(connectionString));
+
+            // --- JWT Authentication ---
+            var jwtKey = builder.Configuration["Jwt:Key"];
+            if (string.IsNullOrEmpty(jwtKey))
+                throw new InvalidOperationException("JWT Key não está configurada no appsettings.json.");
+
+            builder.Services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
                 {
-                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
-                    Id = "JWT"
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = builder.Configuration["Jwt:Issuer"],
+                    ValidAudience = builder.Configuration["Jwt:Audience"],
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey!)),
+                    ClockSkew = TimeSpan.Zero
+                };
+                options.Events = new JwtBearerEvents
+                {
+                    OnAuthenticationFailed = context =>
+                    {
+                        context.NoResult();
+                        context.Response.StatusCode = 401;
+                        Console.WriteLine($"[JWT] Falha na autenticação: {context.Exception.Message}");
+                        return Task.CompletedTask;
+                    },
+                    OnChallenge = context =>
+                    {
+                        context.HandleResponse();
+                        context.Response.StatusCode = 401;
+                        context.Response.ContentType = "application/json";
+                        Console.WriteLine("[JWT] Token inválido ou ausente.");
+                        return context.Response.WriteAsync("{\"error\": \"Token inválido ou ausente.\"}");
+                    }
+                };
+            });
+
+            // --- Authorization policies ---
+            builder.Services.AddAuthorization(options =>
+            {
+                options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+                options.AddPolicy("UserOrAdmin", policy => policy.RequireRole("Admin", "User"));
+            });
+
+            // --- Swagger ---
+            builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddSwaggerGen(c =>
+            {
+                c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+                {
+                    In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+                    Description = "Insira o token JWT sem o Bearer ou aspas",
+                    Name = "Authorization",
+                    Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+                    Scheme = "bearer",
+                    BearerFormat = "JWT"
+                });
+                c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+                {
+                    {
+                        new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+                        {
+                            Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                            {
+                                Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                                Id = "Bearer"
+                            }
+                        },
+                        Array.Empty<string>()
+                    }
+                });
+            });
+
+            var app = builder.Build();
+
+            app.UseSwagger();
+            app.UseSwaggerUI();
+            app.UseAuthentication();
+            app.UseAuthorization();
+
+            // --- Health endpoint ---
+            app.MapGet("/health", () =>
+            {
+                app.Logger.LogInformation("GET /health chamado.");
+                return Results.Ok("OK");
+            });
+
+            // --- Debug endpoint: valida e decodifica token (assinatura real) ---
+            app.MapGet("/debug/token", (HttpContext context, IConfiguration config) =>
+            {
+                var authHeader = context.Request.Headers["Authorization"].ToString();
+
+                if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+                {
+                    return Results.BadRequest(new { error = "Token JWT não fornecido no header Authorization." });
                 }
-            },
-            Array.Empty<string>()
+
+                var token = authHeader.Substring("Bearer ".Length).Trim();
+
+                try
+                {
+                    var jwtKey = config["Jwt:Key"];
+                    var issuer = config["Jwt:Issuer"];
+                    var audience = config["Jwt:Audience"];
+
+                    var handler = new JwtSecurityTokenHandler();
+
+                    var validationParams = new TokenValidationParameters
+                    {
+                        ValidateIssuer = true,
+                        ValidateAudience = true,
+                        ValidateLifetime = true,
+                        ValidateIssuerSigningKey = true,
+                        ValidIssuer = issuer,
+                        ValidAudience = audience,
+                        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey!)),
+                        ClockSkew = TimeSpan.Zero
+                    };
+
+                    var principal = handler.ValidateToken(token, validationParams, out var validatedToken);
+                    var jwt = (JwtSecurityToken)validatedToken;
+
+                    var claims = principal.Claims.Select(c => new { c.Type, c.Value }).ToList();
+
+                    return Results.Ok(new
+                    {
+                        message = "Token validado e decodificado com sucesso!",
+                        issuer = jwt.Issuer,
+                        audience = jwt.Audiences,
+                        expiration = jwt.ValidTo,
+                        claims
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = $"Falha ao validar token: {ex.Message}" });
+                }
+            }).AllowAnonymous();
+
+            // --- CRUD Endpoints /games ---
+            app.MapPost("/games", async (Game game, GamesDbContext db, ILogger<Program> logger) =>
+            {
+                try
+                {
+                    logger.LogInformation("POST /games chamado com Title: {Title}, Genre: {Genre}, Price: {Price}",
+                        game.Title, game.Genre, game.Price);
+
+                    // 🔍 Validação de campos obrigatórios e regras de negócio
+                    if (string.IsNullOrWhiteSpace(game.Title))
+                        return Results.BadRequest(new { error = "O campo 'title' é obrigatório." });
+
+                    if (string.IsNullOrWhiteSpace(game.Genre))
+                        return Results.BadRequest(new { error = "O campo 'genre' é obrigatório." });
+
+                    if (game.Price <= 0)
+                        return Results.BadRequest(new { error = "O campo 'price' deve ser maior que zero." });
+
+                    if (game.Description?.Length > 1000)
+                        return Results.BadRequest(new { error = "A descrição não pode ultrapassar 1000 caracteres." });
+
+                    // ✅ Se tudo ok, cria o jogo
+                    game.Id = Guid.NewGuid();
+                    db.Games.Add(game);
+                    await db.SaveChangesAsync();
+
+                    logger.LogInformation("Jogo criado com Id: {Id}", game.Id);
+                    return Results.Created($"/games/{game.Id}", game);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Erro ao criar jogo.");
+                    return Results.Json(
+                        new { error = "Erro interno ao criar o jogo." },
+                        statusCode: 500
+                    );
+                }
+            }).RequireAuthorization("AdminOnly");
+
+            app.MapGet("/games", async (GamesDbContext db, ILogger<Program> logger) =>
+            {
+                try
+                {
+                    logger.LogInformation("GET /games chamado.");
+                    var games = await db.Games.ToListAsync();
+                    logger.LogInformation("Retornados {Count} jogos.", games.Count);
+                    return games.Any() ? Results.Ok(games) : Results.Ok(new List<Game>());
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Erro ao listar jogos.");
+                    return Results.StatusCode(500);
+                }
+            }).RequireAuthorization("UserOrAdmin");
+
+            app.MapGet("/games/{id}", async (Guid id, GamesDbContext db, ILogger<Program> logger) =>
+            {
+                try
+                {
+                    logger.LogInformation("GET /games/{Id} chamado.", id);
+                    var game = await db.Games.FindAsync(id);
+                    if (game == null)
+                    {
+                        logger.LogWarning("Jogo com Id {Id} não encontrado.", id);
+                        return Results.NotFound();
+                    }
+                    logger.LogInformation("Jogo encontrado: {Id}", id);
+                    return Results.Ok(game);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Erro ao obter jogo {Id}.", id);
+                    return Results.StatusCode(500);
+                }
+            }).RequireAuthorization("UserOrAdmin");
+
+            app.MapPut("/games/{id}", async (Guid id, Game updatedGame, GamesDbContext db, ILogger<Program> logger) =>
+            {
+                try
+                {
+                    logger.LogInformation("PUT /games/{Id} chamado com Title: {Title}, Genre: {Genre}, Price: {Price}",
+                        id, updatedGame.Title, updatedGame.Genre, updatedGame.Price);
+                    var game = await db.Games.FindAsync(id);
+                    if (game == null)
+                    {
+                        logger.LogWarning("Jogo com Id {Id} não encontrado.", id);
+                        return Results.NotFound();
+                    }
+
+                    game.Title = updatedGame.Title;
+                    game.Genre = updatedGame.Genre;
+                    game.Price = updatedGame.Price;
+                    await db.SaveChangesAsync();
+                    logger.LogInformation("Jogo com Id {Id} atualizado.", id);
+                    return Results.NoContent();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Erro ao atualizar jogo {Id}.", id);
+                    return Results.StatusCode(500);
+                }
+            }).RequireAuthorization("AdminOnly");
+
+            app.MapDelete("/games/{id}", async (Guid id, GamesDbContext db, ILogger<Program> logger) =>
+            {
+                try
+                {
+                    logger.LogInformation("DELETE /games/{Id} chamado.", id);
+                    var game = await db.Games.FindAsync(id);
+                    if (game == null)
+                    {
+                        logger.LogWarning("Jogo com Id {Id} não encontrado.", id);
+                        return Results.NotFound();
+                    }
+
+                    db.Games.Remove(game);
+                    await db.SaveChangesAsync();
+                    logger.LogInformation("Jogo com Id {Id} excluído.", id);
+                    return Results.NoContent();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Erro ao excluir jogo {Id}.", id);
+                    return Results.StatusCode(500);
+                }
+            }).RequireAuthorization("AdminOnly");
+
+            app.Run();
         }
-    });
-});
-
-// JWT Authentication
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "default_secret_key";
-var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "default_issuer";
-
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = false,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtIssuer,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
-        };
-    });
-
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
-});
-
-// EF Core InMemory
-builder.Services.AddDbContext<GamesDbContext>(opt =>
-    opt.UseInMemoryDatabase("GamesDb"));
-
-var app = builder.Build();
-
-app.UseAuthentication();
-app.UseAuthorization();
-
-// Swagger
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    }
 }
 
-// GET /games -> lista todos
-app.MapGet("/games", async (GamesDbContext db) =>
-    await db.Games.AsNoTracking().ToListAsync())
-.WithName("GetGames")
-.WithTags("Games");
-
-// POST /games -> cria jogo
-app.MapPost("/games", async (GameCreateDto dto, GamesDbContext db) =>
-{
-    if (string.IsNullOrWhiteSpace(dto.Title) || dto.Title.Length < 3)
-        return Results.BadRequest("Title is required and must be at least 3 characters long.");
-    if (string.IsNullOrWhiteSpace(dto.Genre) || dto.Genre.Length < 3)
-        return Results.BadRequest("Genre is required and must be at least 3 characters long.");
-    if (dto.Price < 0)
-        return Results.BadRequest("Price must be >= 0.");
-    if (dto.ReleaseDate.HasValue && dto.ReleaseDate.Value.Date > DateTime.UtcNow.Date)
-        return Results.BadRequest("Release date cannot be in the future.");
-
-    var game = new Game
-    {
-        Title = dto.Title.Trim(),
-        Genre = dto.Genre.Trim(),
-        Price = dto.Price,
-        ReleaseDate = dto.ReleaseDate?.Date ?? DateTime.UtcNow.Date
-    };
-
-    db.Games.Add(game);
-    await db.SaveChangesAsync();
-
-    return Results.Created($"/games/{game.Id}", game);
-})
-.RequireAuthorization("AdminOnly")
-.WithName("CreateGame")
-.WithTags("Games");
-
-// GET /games/{id} -> busca jogo por Id
-app.MapGet("/games/{id:guid}", async (Guid id, GamesDbContext db) =>
-{
-    var game = await db.Games
-        .AsNoTracking()
-        .FirstOrDefaultAsync(g => g.Id == id);
-
-    return game is not null
-        ? Results.Ok(game)
-        : Results.NotFound();
-})
-.WithName("GetGameById")
-.WithTags("Games");
-
-// PUT /games/{id} -> atualiza jogo
-app.MapPut("/games/{id:guid}", async (Guid id, GameUpdateDto dto, GamesDbContext db) =>
-{
-    if (string.IsNullOrWhiteSpace(dto.Title) || dto.Title.Length < 3)
-        return Results.BadRequest("Title is required and must be at least 3 characters long.");
-    if (string.IsNullOrWhiteSpace(dto.Genre) || dto.Genre.Length < 3)
-        return Results.BadRequest("Genre is required and must be at least 3 characters long.");
-    if (dto.Price < 0)
-        return Results.BadRequest("Price must be >= 0.");
-    if (dto.ReleaseDate.HasValue && dto.ReleaseDate.Value.Date > DateTime.UtcNow.Date)
-        return Results.BadRequest("Release date cannot be in the future.");
-
-    var game = await db.Games.FirstOrDefaultAsync(g => g.Id == id);
-    if (game is null)
-        return Results.NotFound();
-
-    game.Title = dto.Title.Trim();
-    game.Genre = dto.Genre.Trim();
-    game.Price = dto.Price;
-    game.ReleaseDate = dto.ReleaseDate?.Date ?? game.ReleaseDate;
-
-    await db.SaveChangesAsync();
-
-    return Results.Ok(game);
-})
-.RequireAuthorization("AdminOnly")
-.WithName("UpdateGame")
-.WithTags("Games");
-
-// DELETE /games/{id} -> remove jogo
-app.MapDelete("/games/{id:guid}", async (Guid id, GamesDbContext db) =>
-{
-    var game = await db.Games.FirstOrDefaultAsync(g => g.Id == id);
-    if (game is null)
-        return Results.NotFound();
-
-    db.Games.Remove(game);
-    await db.SaveChangesAsync();
-
-    return Results.NoContent();
-})
-.RequireAuthorization("AdminOnly")
-.WithName("DeleteGame")
-.WithTags("Games");
-
-app.Run();
-
-// Necessário para WebApplicationFactory nos testes
+// 👇 Necessário para testes e compatibilidade com WebApplicationFactory<Program>
 public partial class Program { }

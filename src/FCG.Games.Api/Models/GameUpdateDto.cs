@@ -1,9 +1,10 @@
-namespace FCG.Games.Api.Models;
-
-public class GameUpdateDto
+namespace FCG.Games.Api.Models
 {
-    public string Title { get; set; } = string.Empty;
-    public string Genre { get; set; } = string.Empty;
-    public decimal Price { get; set; }
-    public DateTime? ReleaseDate { get; set; }
+    public class GameUpdateDto
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string Genre { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+    }
 }
