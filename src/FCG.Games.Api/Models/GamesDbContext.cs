@@ -1,10 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 
-namespace FCG.Games.Api.Models;
-
-public class GamesDbContext : DbContext
+namespace FCG.Games.Api.Models
 {
-    public GamesDbContext(DbContextOptions<GamesDbContext> options) : base(options) { }
+    public class GamesDbContext : DbContext
+    {
+        public GamesDbContext(DbContextOptions<GamesDbContext> options) : base(options) { }
 
-    public DbSet<Game> Games { get; set; } = null!;
+        public DbSet<Game> Games { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Game>().ToTable("Games");
+        }
+    }
 }
