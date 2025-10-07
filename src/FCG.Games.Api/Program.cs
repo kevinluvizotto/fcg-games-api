@@ -54,14 +54,14 @@ namespace FCG.Games.Api
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidateAudience = true,
+                    ValidateAudience = false, 
                     ValidateLifetime = true,
                     ValidateIssuerSigningKey = true,
                     ValidIssuer = builder.Configuration["Jwt:Issuer"],
-                    ValidAudience = builder.Configuration["Jwt:Audience"],
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey!)),
                     ClockSkew = TimeSpan.Zero
                 };
+
                 options.Events = new JwtBearerEvents
                 {
                     OnAuthenticationFailed = context =>
